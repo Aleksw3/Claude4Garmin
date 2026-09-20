@@ -245,9 +245,34 @@ async def _enrich_activities_background(garmin, missing_ids: list, settings: dic
     global activity_details
 
     details = ac.load_activity_details()
+    activity_by_id = {
+        act.get("activity_id", ""): act for act in (health_data or {}).get("activities", [])
+    }
+    # Strength sets are the most useful workout detail for coaching, so retrieve
+    # them first instead of making them wait behind endurance-only requests.
+    missing_ids.sort(key=lambda aid: not any(
+        term in (activity_by_id.get(aid, {}).get("type") or "").lower()
+        for term in ("strength", "weight", "gym")
+    ))
 
     for activity_id in missing_ids:
         entry = {"fetched_at": datetime.now().isoformat(timespec="seconds")}
+        activity_type = (activity_by_id.get(activity_id, {}).get("type") or "").lower()
+        is_strength = any(term in activity_type for term in ("strength", "weight", "gym"))
+
+        # Strength sessions need exercise sets. Fetch this first and skip
+        # endurance-specific details, which avoids unnecessary Garmin calls.
+        if is_strength:
+            if settings.get("activity_detail_exercise_sets", True):
+                try:
+                    entry["exercise_sets"] = await asyncio.to_thread(
+                        garmin.get_activity_exercise_sets, activity_id
+                    )
+                except Exception as e:
+                    entry["exercise_sets_error"] = str(e)
+            details[activity_id] = entry
+            ac.save_activity_details(details)
+            continue
 
         if settings.get("activity_detail_hr_zones", True):
             try:
@@ -399,6 +424,7 @@ def _register_digest_task(send_time: str) -> None:
 
 def _unregister_digest_task() -> None:
     """Remove the scheduled task. Silently ignores if it doesn't exist."""
+    return
     subprocess.run(
         ["schtasks", "/Delete", "/F", "/TN", DIGEST_TASK_NAME],
         capture_output=True,
@@ -420,7 +446,7 @@ async def index(request: Request):
     if not garmin_connected or not coach:
         return RedirectResponse("/settings")
     settings = sm.load_settings()
-    return templates.TemplateResponse("index.html", {
+    return templates.TemplateResponse(request, "index.html", {
         "request": request,
         "health_summary": health_summary,
         "health_data": health_data,
@@ -454,7 +480,7 @@ def _get_local_ip() -> str:
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, error: str = "", success: str = ""):
     existing = cm.load_all_credentials()
-    return templates.TemplateResponse("settings.html", {
+    return templates.TemplateResponse(request,"settings.html", {
         "request": request,
         "garmin_email": existing.get("garmin_email") or "",
         "has_password": bool(existing.get("garmin_password")),
@@ -526,7 +552,7 @@ async def health():
 @app.get("/api/sidebar-html", response_class=HTMLResponse)
 async def api_sidebar_html(request: Request):
     """Return the rendered sidebar partial for in-place DOM refresh (no page reload)."""
-    return templates.TemplateResponse("sidebar_content.html", {
+    return templates.TemplateResponse(request, "sidebar_content.html", {
         "request":        request,
         "health_data":    health_data,
         "nutrition_data": nutrition_data,
@@ -578,6 +604,34 @@ async def api_chat(body: ChatRequest):
                         f"{body.message}"
                     )
                     display_message = body.message
+    elif re.search(r"\b(?:strength|weightlifting|weights|lifting|gym)\b", body.message, re.I):
+        # Strength exercise sets are useful for broad coaching questions too.
+        # Add cached sets for the visible strength sessions without making the
+        # permanent chat history larger.
+        strength_blocks = []
+        for position, act in enumerate((health_data or {}).get("activities", []), 1):
+            act_type = (act.get("type") or "").lower()
+            if not any(term in act_type for term in ("strength", "weight", "gym")):
+                continue
+            act_id = act.get("activity_id", "")
+            if not act_id or act_id not in activity_details:
+                continue
+            detail_text = ac.format_activity_detail_for_prompt(
+                act, activity_details[act_id], sm.load_settings()
+            )
+            if detail_text:
+                label = act.get("name") or act.get("type") or "Strength activity"
+                act_date = act.get("date", "")
+                strength_blocks.append(
+                    f"#{position} {label} on {act_date}:\n{detail_text}"
+                )
+        if strength_blocks:
+            api_message = (
+                "[CACHED STRENGTH SESSION DETAILS:\n"
+                + "\n\n".join(strength_blocks)
+                + f"]\n\n{body.message}"
+            )
+            display_message = body.message
 
     async def generate():
         try:

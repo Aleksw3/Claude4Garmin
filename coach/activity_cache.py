@@ -227,22 +227,15 @@ def format_splits(splits_data) -> str:
 
 
 def format_exercise_sets(sets_data) -> str:
-    """
-    Format strength training exercise sets from get_activity_exercise_sets() response.
-
-    Output:
-      Squat: 3 sets × 8 reps @ 80 kg
-      Bench Press: 4 sets × 6 reps @ 75 kg
-    """
+    """Format Garmin strength sets into named movements, reps, and loads."""
     if not sets_data:
         return ""
 
-    # Normalise to list of exercise entries
     exercises_raw = []
     if isinstance(sets_data, list):
         exercises_raw = sets_data
     elif isinstance(sets_data, dict):
-        for key in ("exerciseSets", "sets", "exercises", "items"):
+        for key in ("exerciseSets", "summarizedExerciseSets", "sets", "exercises", "items"):
             if isinstance(sets_data.get(key), list):
                 exercises_raw = sets_data[key]
                 break
@@ -250,47 +243,59 @@ def format_exercise_sets(sets_data) -> str:
     if not exercises_raw:
         return ""
 
-    # Group by exercise name (for cleaner output)
+    def exercise_name(item: dict) -> str:
+        # Garmin attaches its classified movement to the inner exercises list.
+        # Pick the highest-confidence classification, then present its readable name.
+        candidates = item.get("exercises") or []
+        candidates = [candidate for candidate in candidates if isinstance(candidate, dict)]
+        if candidates:
+            best = max(candidates, key=lambda candidate: candidate.get("probability") or 0)
+            name = best.get("name") or best.get("exerciseName") or best.get("category")
+        else:
+            name = item.get("exerciseName") or item.get("category") or item.get("exerciseType")
+        if not name or str(name).upper() == "UNKNOWN":
+            return "Unknown exercise"
+        return str(name).replace("_", " ").title()
+
     from collections import defaultdict
     grouped: dict[str, list] = defaultdict(list)
 
     for item in exercises_raw:
-        if not isinstance(item, dict):
+        if not isinstance(item, dict) or item.get("setType") not in (None, "ACTIVE"):
+            continue  # Garmin includes REST entries in the same response.
+
+        reps = item.get("repetitions")
+        if reps is None:
+            reps = item.get("reps")
+        if reps is None:
+            reps = item.get("repetitionCount")
+        weight = item.get("weight")
+        if weight is None:
+            weight = item.get("weightInKilograms")
+
+        # Warm-up/timer entries and unclassified zero-rep events are not lifting sets.
+        if not reps and not weight:
             continue
-        # Exercise name
-        name = (
-            item.get("exerciseName")
-            or item.get("category")
-            or item.get("exerciseType")
-            or "Unknown exercise"
-        )
-        if isinstance(name, dict):
-            name = name.get("exerciseName") or name.get("key") or str(name)
-        grouped[str(name)].append(item)
+
+        item = dict(item)
+        item["_reps"] = reps
+        item["_weight"] = weight
+        grouped[exercise_name(item)].append(item)
 
     lines = []
-    for exercise_name, sets in grouped.items():
-        # Count sets, reps, weight
-        set_count = len(sets)
-        rep_counts = [s.get("repetitions") or s.get("reps") or s.get("repetitionCount") for s in sets]
-        weights    = [s.get("weight") or s.get("weightInKilograms") for s in sets]
+    for name, sets in grouped.items():
+        reps = [item["_reps"] for item in sets if item["_reps"] not in (None, 0)]
+        weights = [item["_weight"] for item in sets if item["_weight"] not in (None, 0)]
+        parts = [f"  {name}: {len(sets)} set{'s' if len(sets) != 1 else ''}"]
 
-        rep_vals    = [r for r in rep_counts if r is not None]
-        weight_vals = [w for w in weights if w is not None]
-
-        parts = [f"  {exercise_name}: {set_count} set{'s' if set_count != 1 else ''}"]
-
-        if rep_vals:
-            avg_reps = round(sum(rep_vals) / len(rep_vals))
-            parts.append(f"× {avg_reps} reps")
-
-        if weight_vals:
-            # Convert from grams to kg if values seem large
-            avg_w = sum(weight_vals) / len(weight_vals)
-            if avg_w > 500:   # likely grams
-                avg_w = avg_w / 1000
-            parts.append(f"@ {avg_w:.1f} kg")
-
+        if reps:
+            average_reps = round(sum(reps) / len(reps))
+            parts.append(f"× {average_reps} reps")
+        if weights:
+            average_weight = sum(weights) / len(weights)
+            if average_weight > 500:  # Garmin returns kilograms as grams here.
+                average_weight /= 1000
+            parts.append(f"@ {average_weight:.1f} kg")
         lines.append(" ".join(parts))
 
     return "\n".join(lines) if lines else ""

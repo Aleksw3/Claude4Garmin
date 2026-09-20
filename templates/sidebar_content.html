@@ -127,7 +127,7 @@
           {% if health_data and health_data.activities %}
           {% for act in health_data.activities %}
           <div class="act-row">
-            <div class="act-name">{{ act.name or act.type or "Activity" }}</div>
+            <div class="act-name"><span style="color:var(--accent); font-weight:700;">#{{ loop.index }}</span> {{ act.name or act.type or "Activity" }}</div>
             <div class="act-meta">
               {{- act.date | fmt_date if act.date else "" -}}
               {%- if act.duration_seconds %} &middot; {{ act.duration_seconds | dur }}{% endif %}

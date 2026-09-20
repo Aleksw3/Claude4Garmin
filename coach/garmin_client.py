@@ -89,13 +89,19 @@ def get_garmin_client(email: str, password: str) -> Garmin:
         except Exception:
             pass  # Session expired or invalid — fall through to fresh login
 
-    # Fresh login; prompt_mfa is only called if Garmin requires 2FA
+    # Fresh login; prompt_mfa is only called if Garmin requires 2FA.
     client = Garmin(email=email, password=password, prompt_mfa=_prompt_mfa)
-    client.login()
 
-    # Persist tokens so the next run skips re-authentication
-    SESSION_DIR.mkdir(exist_ok=True)
-    client.garth.dump(str(SESSION_DIR))
+    # Current python-garminconnect releases persist OAuth tokens through
+    # Garmin.login(tokenstore). Older supported releases exposed the underlying
+    # garth client instead. Keep both paths so the declared dependency range
+    # continues to work.
+    if hasattr(client, "garth"):
+        client.login()
+        SESSION_DIR.mkdir(exist_ok=True)
+        client.garth.dump(str(SESSION_DIR))
+    else:
+        client.login(str(SESSION_DIR))
 
     return client
 

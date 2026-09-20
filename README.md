@@ -208,11 +208,11 @@ The profile is saved immediately and takes effect from your next message — no 
 ### Data Preferences
 Choose what data the app fetches and how far back it looks:
 
-- **Time range** — 7, 14, or 30 days of history
+- **Time range** — 7, 14, 30, 60, or 90 days of history
 - **Daily Stats** — steps, calories, stress, body battery, resting HR, distance
 - **Sleep** — total duration, deep, REM, light sleep, sleep score
-- **Activities** — toggle on/off, choose how many recent activities to show (5, 10, or 20); each activity is shown with a `#N` reference number so you can ask for a detailed breakdown in chat
-- **Workout Detail** — when Activities is enabled, the app silently fetches and caches HR zones, lap splits, exercise sets (strength), and power zones (cycling) for each new activity. This detail is never added to Claude's context automatically — it's only injected when you ask, e.g. *"analyze workout #1"*. Toggles: HR Zones, Lap Splits, Exercise Sets, Power Zones.
+- **Activities** — toggle on/off, choose how many recent activities to show (5, 10, 20, or 50); each activity is shown with a `#N` reference number so you can ask for a detailed breakdown in chat
+- **Workout Detail** — when Activities is enabled, the app silently fetches and caches HR zones, lap splits, exercise sets (strength), and power zones (cycling) for each new activity. Strength-session questions receive cached exercise-set detail automatically; for any other workout, ask e.g. *"analyze workout #1"*. Toggles: HR Zones, Lap Splits, Exercise Sets, Power Zones.
 - **HRV** — overnight HRV average and status shown alongside daily stats
 - **Training Readiness** — 0–100 score shown alongside daily stats
 - **Training Status** — rolling label shown in the sidebar header
